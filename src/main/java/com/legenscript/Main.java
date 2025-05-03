@@ -1,18 +1,27 @@
-package com.legenscript; // Ajusta el paquete
+package com.legenscript;
 
-
-import com.legenscript.antlr.*;
+// --- Asegúrate de tener TODAS estas importaciones ---
+import com.legenscript.antlr.*; // Para Lexer, Parser, Listener base
 import org.antlr.v4.runtime.*;
 import org.antlr.v4.runtime.tree.ParseTree;
+import org.antlr.v4.runtime.tree.ParseTreeWalker; // <--- IMPORTANTE: El caminador de árboles
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList; // <--- Para crear lista de errores si no es global
 import java.util.List;
 
 public class Main {
+
+    // --- Variables para guardar resultados ---
+    // Puedes usar una lista única o separadas. Usaremos una combinada.
+    private static final List<ErrorEntry> analysisErrors = new ArrayList<>();
+    // Instancia de la tabla de símbolos
+    private static final SymbolTable symbolTable = new SymbolTable();
+
 
     public static void main(String[] args) {
         if (args.length < 1) {
@@ -21,7 +30,7 @@ public class Main {
         }
 
         String filePathString = args[0];
-        Path sourceFile;
+        Path sourceFile = null; // Inicializar a null
         try {
             sourceFile = Paths.get(filePathString);
             if (!Files.exists(sourceFile) || !Files.isReadable(sourceFile)) {
@@ -31,72 +40,107 @@ public class Main {
         } catch (InvalidPathException e) {
             System.err.println("Error: Ruta de archivo inválida: " + filePathString);
             System.exit(1);
-            return; // Necesario para el compilador
         }
 
-        System.out.println("Iniciando análisis de '" + filePathString + "'...");
+        // Limpiar estado de análisis anteriores
+        analysisErrors.clear();
+        symbolTable.clear();
+
+        System.out.println("Iniciando análisis de '" + (sourceFile != null ? sourceFile.getFileName() : filePathString) + "'...");
         System.out.println("----------------------------------------");
 
+        ParseTree tree = null; // Variable para guardar el árbol de parseo
+
         try {
-            // 1. Crear CharStream desde el archivo
             CharStream input = CharStreams.fromPath(sourceFile);
-
-            // 2. Crear Lexer
             LegenScriptLexer lexer = new LegenScriptLexer(input);
-
-            // 3. Crear Flujo de Tokens
             CommonTokenStream tokens = new CommonTokenStream(lexer);
-
-            // 4. Crear Parser
             LegenScriptParser parser = new LegenScriptParser(tokens);
 
-            // 5. Configurar Manejador de Errores Personalizado
-            parser.removeErrorListeners(); // Quitar el listener por defecto que imprime a consola
-            LegenScriptErrorListener errorListener = new LegenScriptErrorListener(sourceFile.getFileName().toString());
-            parser.addErrorListener(errorListener);
-            // También podríamos añadirlo al lexer si queremos capturar errores léxicos más específicamente
+            // Configurar Listener de Errores Léxicos/Sintácticos
+            // Este listener llenará nuestra lista 'analysisErrors' si ANTLR detecta problemas
+            LegenScriptErrorListener errorListener = new LegenScriptErrorListener(sourceFile.getFileName().toString(), analysisErrors);
+
             lexer.removeErrorListeners();
             lexer.addErrorListener(errorListener);
+            parser.removeErrorListeners();
+            parser.addErrorListener(errorListener);
 
-            // 6. Iniciar el Parseo desde la regla inicial ('program')
-            ParseTree tree = parser.program(); // Ejecuta el análisis
-
-            // 7. Verificar Errores después del parseo
-            List<ErrorEntry> errors = errorListener.getErrors();
-
-            // 8. Reportar Resultados
-            System.out.println("----------------------------------------");
-            if (errors.isEmpty()) {
-                System.out.println("Análisis completado. ¡True Story! El código es sintácticamente legendario.");
-
-                // -- Opcional: Imprimir el árbol de parseo (para depuración/demostración) --
-                // System.out.println("\nÁrbol de Parseo (Formato LISP):");
-                // System.out.println(tree.toStringTree(parser));
-
-                // -- Opcional: Imprimir Tokens (para depuración/demostración) --
-                // System.out.println("\nTokens Reconocidos:");
-                // tokens.fill(); // Asegurarse que todos los tokens están cargados
-                // for (Token t : tokens.getTokens()) {
-                //      String symbolicName = LegenScriptLexer.VOCABULARY.getSymbolicName(t.getType());
-                //      System.out.printf("  %-15s '%s'\n", symbolicName, t.getText().replace("\n", "\\n"));
-                // }
-
-            } else {
-                System.out.println("Análisis fallido. Se encontraron " + errors.size() + " errores:");
-                System.out.print(errorListener.toString()); // Usar el toString del listener para formato
-                System.out.println("----------------------------------------");
-                System.out.println("Se necesita una 'intervention' en este código.");
-                System.exit(1); // Salir con código de error
-            }
+            // --- Ejecutar el Parseo ---
+            System.out.println("Ejecutando análisis sintáctico...");
+            tree = parser.program(); // Intenta construir el árbol
 
         } catch (IOException e) {
             System.err.println("Error al leer o procesar el archivo: " + e.getMessage());
-            e.printStackTrace(); // Imprimir stack trace para depuración
-            System.exit(1);
+            analysisErrors.add(new ErrorEntry("Fatal", 0, 0, "Error I/O: " + e.getMessage()));
         } catch (Exception e) {
-            System.err.println("¡Intervention Mayor! Ocurrió un error inesperado: " + e.getMessage());
+            System.err.println("¡Intervention Mayor! Ocurrió un error inesperado durante el parseo: " + e.getMessage());
+            analysisErrors.add(new ErrorEntry("Fatal", 0, 0, "Excepción durante parseo: " + e.getMessage()));
             e.printStackTrace();
-            System.exit(1);
+        }
+
+        // --- Análisis Semántico (Tabla de Símbolos) SÓLO si no hubo errores antes y se creó el árbol ---
+        if (analysisErrors.isEmpty() && tree != null) {
+            System.out.println("Sintaxis OK. Recorriendo árbol para tabla de símbolos y análisis semántico...");
+            try {
+                // 1. Crear el ParseTreeWalker (el "caminador" estándar de ANTLR)
+                ParseTreeWalker walker = new ParseTreeWalker();
+
+                // 2. Crear tu Listener (el que llena la tabla de símbolos)
+                //    Le pasamos la tabla y la lista de errores (para reportar errores semánticos)
+                LegenScriptCompilerListener compilerListener = new LegenScriptCompilerListener(symbolTable, analysisErrors);
+
+                // 3. Ejecutar el recorrido (walk)
+                //    Esto hará que el 'walker' visite cada nodo del 'tree'
+                //    y llame a los métodos 'enterRuleName' / 'exitRuleName' en tu 'compilerListener'
+                walker.walk(compilerListener, tree);
+
+                System.out.println("Recorrido del árbol completado.");
+
+            } catch (Exception e) {
+                System.err.println("¡Intervention Mayor! Ocurrió un error inesperado durante el análisis semántico: " + e.getMessage());
+                analysisErrors.add(new ErrorEntry("Fatal", 0, 0, "Excepción durante recorrido: " + e.getMessage()));
+                e.printStackTrace();
+            }
+        } else if (tree == null && analysisErrors.isEmpty()) {
+            // Caso raro donde no hubo errores reportados pero el árbol es nulo
+            analysisErrors.add(new ErrorEntry("Fatal", 0, 0, "Fallo en el parseo, árbol nulo."));
+            System.out.println("Fallo en el parseo: Árbol nulo.");
+        } else {
+            System.out.println("Se encontraron errores léxicos/sintácticos. Análisis semántico cancelado.");
+        }
+
+
+        // --- Reporte Final ---
+        System.out.println("----------------------------------------");
+        // 4. Imprimir la Tabla de Símbolos (SIEMPRE, para ver qué se llenó)
+        System.out.println("Contenido Final de la Tabla de Símbolos:");
+        System.out.println(symbolTable); // Llama al toString() que definiste en SymbolTable
+        System.out.println("----------------------------------------");
+
+        // Imprimir Errores Totales (Léxicos, Sintácticos, Semánticos)
+        if (analysisErrors.isEmpty()) {
+            System.out.println("Análisis completado sin errores detectados. ¡True Story!");
+        } else {
+            System.out.println("Análisis fallido. Se encontraron " + analysisErrors.size() + " errores en total:");
+            // Ordenar errores para mostrarlos consistentemente (opcional pero útil)
+            try {
+                analysisErrors.sort((e1, e2) -> {
+                    int lineCompare = Integer.compare(e1.getLine(), e2.getLine());
+                    if (lineCompare == 0) {
+                        return Integer.compare(e1.getColumn(), e2.getColumn());
+                    }
+                    return lineCompare;
+                });
+            } catch (Exception e) { /* Ignorar si falla la ordenación */ }
+
+            for (ErrorEntry error : analysisErrors) {
+                System.out.printf(" -> Error %-10s en línea %-3d col %-3d: %s%n",
+                        error.getType(), error.getLine(), error.getColumn(), error.getMessage());
+            }
+            System.out.println("----------------------------------------");
+            System.out.println("Se necesita una 'intervention' en este código.");
+            System.exit(1); // Salir con código de error
         }
     }
 }

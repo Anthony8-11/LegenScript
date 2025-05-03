@@ -14,7 +14,7 @@ public class LegenScriptErrorListener extends BaseErrorListener {
     private final List<ErrorEntry> errors = new ArrayList<>();
     private final String filename; // Para reportar en qué archivo ocurrió el error
 
-    public LegenScriptErrorListener(String filename) {
+    public LegenScriptErrorListener(String filename, List<ErrorEntry> analysisErrors) {
         this.filename = filename != null ? filename : "<entrada>";
     }
 
