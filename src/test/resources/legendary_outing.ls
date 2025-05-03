@@ -1,6 +1,6 @@
 // legendary_outing.ls
 // Un episodio de ejemplo en LegenScript para decidir si salir.
-// CORREGIDO: Separada la declaración de la inicialización para 'define'.
+
 
 episode {
     // wait... for... it... Reglas y constantes iniciales
@@ -53,8 +53,8 @@ episode {
 
         // Asumamos que marshall_slaps_left se definió en otro lugar o antes
         // Si no, habría que declararlo aquí también:
-        // define count marshall_slaps_left;
-        // marshall_slaps_left gets 3;
+        define count marshall_slaps_left;
+        marshall_slaps_left gets 3;
 
         // Para este ejemplo, si no existe, causaría un error SEMÁNTICO (no sintáctico)
         // pero para que el parser funcione, la sintaxis es correcta asumiendo que existe.
